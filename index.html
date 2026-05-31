@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Siklus Air — IPA SMP</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#1a3a5c;width:100vw;height:100vh;overflow:hidden;font-family:'Nunito',sans-serif}
+  canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+  #ui{position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between;padding:12px 14px 14px}
+  #toprow{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .badge{background:rgba(0,20,60,0.65);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:16px;padding:6px 14px;color:#fff}
+  #title-badge{font-size:13px;font-weight:900;letter-spacing:0.02em}
+  #stage-badge{text-align:right}
+  #stage-badge .sn{color:rgba(255,255,255,0.45);font-size:9px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;display:block}
+  #stage-badge .sv{color:#7ee8ff;font-size:12px;font-weight:900;display:block}
+  #bottomrow{display:flex;flex-direction:column;align-items:center;gap:7px}
+  #dots{display:flex;gap:5px}
+  .dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.22);border:1.5px solid rgba(255,255,255,0.4);transition:all 0.3s}
+  .dot.on{background:#ffe066;border-color:#ffe066;transform:scale(1.4)}
+  #cap{background:rgba(0,15,50,0.62);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.16);border-radius:24px;padding:7px 18px;text-align:center;max-width:92vw}
+  #cap-s{color:#ffe066;font-size:10px;font-weight:900;letter-spacing:0.1em;text-transform:uppercase;margin-right:7px}
+  #cap-t{color:rgba(255,255,255,0.92);font-size:11.5px;font-weight:700}
+  #tbar{width:320px;height:3px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden}
+  #tfill{height:100%;width:0%;background:linear-gradient(90deg,#7ee8ff,#ffe066);border-radius:2px;transition:width 0.08s linear}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="toprow">
+    <div class="badge" id="title-badge">🌊 Siklus Air — IPA SMP</div>
+    <div class="badge" id="stage-badge">
+      <span class="sn">Tahap <span id="snum">1</span>/9</span>
+      <span class="sv" id="sname">Matahari Bersinar</span>
+    </div>
+  </div>
+  <div id="bottomrow">
+    <div id="dots">
+      <div class="dot on" id="d0"></div><div class="dot" id="d1"></div>
+      <div class="dot" id="d2"></div><div class="dot" id="d3"></div>
+      <div class="dot" id="d4"></div><div class="dot" id="d5"></div>
+      <div class="dot" id="d6"></div><div class="dot" id="d7"></div>
+      <div class="dot" id="d8"></div>
+    </div>
+    <div id="cap"><span id="cap-s">Matahari</span><span id="cap-t">Energi matahari menghangatkan permukaan bumi dan air.</span></div>
+    <div id="tbar"><div id="tfill"></div></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  SIKLUS AIR v4  —  Pure Canvas, mobile-safe
+//  Semua warna menggunakan hex atau rgba() dengan nilai
+//  literal, TIDAK ada float dari lerp() langsung di string
+// ═══════════════════════════════════════════════════════
+
+var cvs = document.getElementById('c');
+var ctx = cvs.getContext('2d');
+
+function resize() { cvs.width = window.innerWidth; cvs.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+// ── Math helpers ──────────────────────────────────────
+function lerp(a,b,f){ return a+(b-a)*f; }
+function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+function rnd(a,b){ return a+Math.random()*(b-a); }
+// Safe integer lerp for color channels (MOBILE SAFE)
+function lerpInt(a,b,f){ return Math.round(a+(b-a)*clamp(f,0,1)); }
+// Build rgba string safely — all values are ints/fixed floats
+function rgba(r,g,b,a){
+  return 'rgba('+Math.round(r)+','+Math.round(g)+','+Math.round(b)+','+(+a.toFixed(3))+')';
+}
+function rgb(r,g,b){
+  return 'rgb('+Math.round(r)+','+Math.round(g)+','+Math.round(b)+')';
+}
+
+// ── Global time ───────────────────────────────────────
+var T = 0;          // seconds, always increasing
+var stageT = 0;     // seconds in current stage
+var stageIdx = 0;
+var lastMs = null;
+
+// ── Stage data ────────────────────────────────────────
+var STAGES = [
+  { id:0, name:'Matahari Bersinar',      label:'Matahari',
+    text:'Energi matahari menghangatkan permukaan bumi dan air.',
+    dur:5,  rain:0,   evap:0,   transp:0, runoff:0, infil:0, wt:0,   sunI:1.0, cloudGrow:0 },
+  { id:1, name:'Evaporasi dari Laut',    label:'Evaporasi',
+    text:'Panas matahari mengubah air laut dan danau menjadi uap air yang naik ke atmosfer.',
+    dur:7,  rain:0,   evap:1,   transp:0, runoff:0, infil:0, wt:0,   sunI:1.0, cloudGrow:0 },
+  { id:2, name:'Kondensasi — Awan Terbentuk', label:'Kondensasi',
+    text:'Uap air naik ke ketinggian dingin, mendingin, dan membentuk tetes air kecil yang menjadi awan.',
+    dur:6,  rain:0,   evap:0.3, transp:0, runoff:0, infil:0, wt:0,   sunI:0.85,cloudGrow:1 },
+  { id:3, name:'Awan Bergerak ke Pegunungan', label:'Kondensasi',
+    text:'Angin membawa awan menuju pegunungan. Awan semakin besar dan berwarna gelap.',
+    dur:5,  rain:0,   evap:0,   transp:0, runoff:0, infil:0, wt:0,   sunI:0.6, cloudGrow:1 },
+  { id:4, name:'Presipitasi — Hujan Turun',   label:'Presipitasi',
+    text:'Awan yang penuh dengan air menurunkan hujan deras ke pegunungan, hutan, dan sungai.',
+    dur:8,  rain:1,   evap:0,   transp:0, runoff:0, infil:0, wt:0,   sunI:0.15,cloudGrow:0 },
+  { id:5, name:'Aliran Permukaan (Runoff)',    label:'Aliran Permukaan',
+    text:'Air hujan mengalir menuruni lereng gunung melalui sungai menuju laut.',
+    dur:6,  rain:0.3, evap:0,   transp:0, runoff:1, infil:0, wt:0,   sunI:0.5, cloudGrow:0 },
+  { id:6, name:'Infiltrasi ke Tanah',          label:'Infiltrasi',
+    text:'Sebagian air hujan meresap ke dalam tanah, mengisi cadangan air tanah (akuifer).',
+    dur:6,  rain:0.1, evap:0,   transp:0, runoff:0.3,infil:1, wt:0.5,sunI:0.65,cloudGrow:0 },
+  { id:7, name:'Air Tanah Mengalir ke Laut',   label:'Air Tanah',
+    text:'Air tanah bergerak perlahan melalui lapisan batuan dan akhirnya mengalir kembali ke laut.',
+    dur:6,  rain:0,   evap:0,   transp:0, runoff:0, infil:0, wt:1,   sunI:0.85,cloudGrow:0 },
+  { id:8, name:'Transpirasi Tumbuhan',         label:'Transpirasi',
+    text:'Tumbuhan menyerap air tanah lalu melepaskannya sebagai uap air ke atmosfer melalui daun.',
+    dur:6,  rain:0,   evap:0.2, transp:1, runoff:0, infil:0, wt:0.3, sunI:0.95,cloudGrow:0 },
+];
+
+// ── Cloud state (smooth interpolation) ───────────────
+var cloudScale   = 1.0;
+var cloudGray    = 0.0;   // 0=white, 1=dark rain cloud
+var CLOUD_SPEED_BASE = 16;
+
+// ── Cloud objects ─────────────────────────────────────
+function makeCloud(xFrac, yFrac, sc, layer) {
+  return { xFrac:xFrac, yFrac:yFrac, x:0, y:0, sc:sc, layer:layer,
+           speed: CLOUD_SPEED_BASE * (0.7 + layer*0.35),
+           puffs:[{ox:-0.45,oy:0.28,r:0.42},{ox:0,oy:0,r:0.58},
+                  {ox:0.52,oy:0.18,r:0.48},{ox:0.95,oy:0.32,r:0.36}] };
+}
+var clouds = [
+  makeCloud(0.10, 0.09, 1.05, 0),
+  makeCloud(0.32, 0.07, 1.30, 1),
+  makeCloud(0.54, 0.08, 0.92, 0),
+  makeCloud(0.71, 0.10, 1.15, 2),
+  makeCloud(0.20, 0.17, 0.78, 1),
+  makeCloud(0.84, 0.06, 0.70, 0),
+];
+// Initialise absolute positions
+clouds.forEach(function(c){ c.x = c.xFrac * window.innerWidth; c.y = c.yFrac; });
+
+function updateClouds(dt) {
+  var W = cvs.width;
+  clouds.forEach(function(c) {
+    c.x -= c.speed * dt;
+    if (c.x < -220) c.x = W + 60;
+  });
+}
+
+function drawCloud(c) {
+  var W = cvs.width, H = cvs.height;
+  var s  = c.sc * cloudScale * (W / 1200);
+  var cx = c.x;
+  var cy = c.yFrac * H;
+  var gr = clamp(cloudGray, 0, 1);
+
+  // Color channels (integer, mobile-safe)
+  var br = lerpInt(255, 175, gr);
+  var bg = lerpInt(255, 182, gr);
+  var bb = lerpInt(255, 192, gr);
+  var dr = lerpInt(218, 135, gr);
+  var dg = lerpInt(222, 145, gr);
+  var db = lerpInt(238, 160, gr);
+
+  var baseCol   = rgb(br, bg, bb);
+  var shadowCol = rgb(dr, dg, db);
+
+  ctx.save();
+
+  // shadow pass
+  c.puffs.forEach(function(p) {
+    ctx.beginPath();
+    ctx.arc(cx + p.ox*88*s, cy + p.oy*58*s + 7*s, p.r*66*s, 0, Math.PI*2);
+    ctx.fillStyle = shadowCol;
+    ctx.fill();
+  });
+
+  // main pass with radial gradient
+  c.puffs.forEach(function(p) {
+    var px = cx + p.ox*88*s;
+    var py = cy + p.oy*58*s;
+    var pr = p.r*66*s;
+    try {
+      var grd = ctx.createRadialGradient(px-pr*0.3, py-pr*0.3, 0, px, py, pr);
+      grd.addColorStop(0, '#ffffff');
+      grd.addColorStop(0.55, baseCol);
+      grd.addColorStop(1,  shadowCol);
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI*2);
+      ctx.fillStyle = grd;
+      ctx.fill();
+    } catch(e) {
+      // fallback: plain fill, never crash
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI*2);
+      ctx.fillStyle = baseCol;
+      ctx.fill();
+    }
+  });
+  ctx.restore();
+}
+
+// ── Particle system ───────────────────────────────────
+// Single flat array of objects for performance
+var particles = [];
+
+function addParticle(x, y, vx, vy, life, r, colR, colG, colB, colA) {
+  particles.push({ x:x, y:y, vx:vx, vy:vy, age:0, life:life,
+                   r:r, cr:colR, cg:colG, cb:colB, ca:colA,
+                   wx: Math.random()*Math.PI*2 });
+}
+
+function spawnEvap(x, y) {
+  addParticle(x + rnd(-28,28), y,
+    rnd(-0.18,0.18), rnd(-0.55,-0.22),
+    rnd(3, 5.5), rnd(2,5),
+    210, 235, 255, 0.65);
+}
+function spawnTransp(x, y) {
+  addParticle(x + rnd(-10,10), y,
+    rnd(-0.12,0.12), rnd(-0.45,-0.18),
+    rnd(2, 4), rnd(1.5,3),
+    175, 255, 195, 0.65);
+}
+function spawnRunoff(x, y) {
+  addParticle(x, y,
+    rnd(0.7,2.2), rnd(0.25,0.75),
+    rnd(3,5), rnd(2,4),
+    70, 155, 255, 0.82);
+}
+function spawnInfil(x, y) {
+  addParticle(x + rnd(-6,6), y,
+    rnd(-0.08,0.08), rnd(0.35,0.85),
+    rnd(3,5), rnd(1.5,3),
+    95, 175, 255, 0.75);
+}
+function spawnWT(x, y) {
+  addParticle(x, y,
+    rnd(0.55,1.1), 0,
+    rnd(4,7), rnd(2,3.5),
+    100, 200, 255, 0.72);
+}
+function spawnSplash(x, y) {
+  for(var i=0;i<4;i++)
+    addParticle(x, y, rnd(-1.4,1.4), rnd(-1.8,-0.4),
+      rnd(0.25,0.5), rnd(1,2.5), 145, 205, 255, 0.8);
+}
+
+// Rain pool (separate — needs length info for drawing)
+var rain = [];
+function spawnRain(n) {
+  var W = cvs.width, H = cvs.height;
+  for(var i=0;i<n;i++)
+    rain.push({ x: rnd(0.04,0.88)*W, y: rnd(0.12,0.22)*H,
+                vy: rnd(7,12), vx: rnd(-0.4,0.4), len: rnd(10,18) });
+}
+
+function updateParticles(dt) {
+  for(var i=particles.length-1; i>=0; i--) {
+    var p=particles[i];
+    p.age += dt;
+    if(p.age >= p.life){ particles.splice(i,1); continue; }
+    p.x += p.vx + Math.sin(p.wx + p.age*2)*0.12;
+    p.y += p.vy;
+  }
+}
+
+function drawParticles() {
+  for(var i=0;i<particles.length;i++) {
+    var p=particles[i];
+    var alpha = Math.sin(Math.PI * p.age / p.life) * p.ca;
+    ctx.save();
+    ctx.globalAlpha = clamp(alpha,0,1);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    ctx.fillStyle = rgb(p.cr, p.cg, p.cb);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function updateRain(dt) {
+  var H = cvs.height;
+  for(var i=rain.length-1; i>=0; i--) {
+    var r=rain[i];
+    r.x += r.vx; r.y += r.vy;
+    if(r.y > H*0.62){ spawnSplash(r.x, r.y); rain.splice(i,1); }
+  }
+}
+
+function drawRain() {
+  ctx.save();
+  ctx.strokeStyle = rgba(155, 205, 255, 0.72);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for(var i=0;i<rain.length;i++) {
+    var r=rain[i];
+    ctx.moveTo(r.x, r.y);
+    ctx.lineTo(r.x + r.vx*0.6, r.y + r.len);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Birds ─────────────────────────────────────────────
+var birds = [];
+for(var bi=0;bi<4;bi++) {
+  birds.push({ x: rnd(-100, cvs.width), y: rnd(cvs.height*0.06, cvs.height*0.24),
+               vx: rnd(38,72), vy: rnd(-3,3),
+               wing: Math.random()*Math.PI*2, sz: rnd(6,11) });
+}
+function updateBirds(dt) {
+  birds.forEach(function(b){
+    b.x += b.vx*dt; b.y += b.vy*dt*0.25; b.wing += dt*(3+Math.random());
+    if(b.x > cvs.width+100){ b.x=-70; b.y=rnd(cvs.height*0.06, cvs.height*0.24); }
+  });
+}
+function drawBirds(alpha) {
+  ctx.save();
+  ctx.globalAlpha = clamp(alpha*0.68, 0, 1);
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth=1.5;
+  birds.forEach(function(b){
+    var f = Math.sin(b.wing)*b.sz*0.55;
+    ctx.beginPath();
+    ctx.moveTo(b.x-b.sz, b.y+f);
+    ctx.quadraticCurveTo(b.x, b.y, b.x+b.sz, b.y+f);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// ── Grass tufts ───────────────────────────────────────
+var grass = [];
+for(var gi=0;gi<90;gi++)
+  grass.push({ xf: Math.random(), h: rnd(5,15), ph: Math.random()*Math.PI*2, n: Math.ceil(rnd(2,5)) });
+
+function drawGrass(groundY, wind) {
+  ctx.save(); ctx.lineWidth=1.1;
+  var W=cvs.width;
+  grass.forEach(function(g){
+    var gx = g.xf*W;
+    var sw = Math.sin(g.ph + T*1.1 + g.xf*3)*wind*g.h*0.38;
+    for(var k=0;k<g.n;k++){
+      var ox=(k-g.n/2)*2.8;
+      ctx.beginPath();
+      ctx.moveTo(gx+ox, groundY);
+      ctx.quadraticCurveTo(gx+ox+sw*0.5, groundY-g.h*0.5, gx+ox+sw, groundY-g.h);
+      ctx.strokeStyle = 'hsl('+(98+k*4)+',62%,'+(28+k*4)+'%)';
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+}
+
+// ── Tree positions ────────────────────────────────────
+var trees = [
+  {xf:0.07,sz:0.88},{xf:0.12,sz:1.05},{xf:0.18,sz:0.82},{xf:0.24,sz:0.98},
+  {xf:0.30,sz:1.10},{xf:0.36,sz:0.88},{xf:0.42,sz:0.95},
+  {xf:0.58,sz:0.92},{xf:0.63,sz:1.02},{xf:0.67,sz:0.80},{xf:0.71,sz:1.08},{xf:0.75,sz:0.88}
+];
+
+function drawTree(xAbs, groundY, sz, wind, phase) {
+  var sw  = Math.sin(phase + T*0.95)*wind*3.5*sz;
+  var tH  = 36*sz, tW=6.5*sz;
+  ctx.save();
+  // trunk
+  ctx.beginPath();
+  ctx.moveTo(xAbs-tW/2, groundY);
+  ctx.lineTo(xAbs+tW/2, groundY);
+  ctx.lineTo(xAbs+tW/2+sw*0.28, groundY-tH);
+  ctx.lineTo(xAbs-tW/2+sw*0.28, groundY-tH);
+  ctx.closePath();
+  ctx.fillStyle='#7a4520'; ctx.fill();
+
+  // foliage layers (3 cones)
+  var layers=[
+    {yo:-tH,    r:26*sz, c:'#1a6e1a', hi:'#3eaa3e'},
+    {yo:-tH-20*sz, r:22*sz, c:'#228b22', hi:'#4ccc4c'},
+    {yo:-tH-37*sz, r:16*sz, c:'#2daa2d', hi:'#5ce05c'},
+  ];
+  layers.forEach(function(l,li){
+    var lx=xAbs+sw*(0.38+li*0.14), ly=groundY+l.yo;
+    try {
+      var gr=ctx.createRadialGradient(lx-l.r*0.28,ly-l.r*0.28,0,lx,ly,l.r);
+      gr.addColorStop(0, l.hi);
+      gr.addColorStop(0.55, l.c);
+      gr.addColorStop(1, '#0a4a0a');
+      ctx.beginPath(); ctx.arc(lx,ly,l.r,0,Math.PI*2);
+      ctx.fillStyle=gr; ctx.fill();
+    } catch(e){
+      ctx.beginPath(); ctx.arc(lx,ly,l.r,0,Math.PI*2);
+      ctx.fillStyle=l.c; ctx.fill();
+    }
+  });
+  ctx.restore();
+}
+
+// ── Sky ───────────────────────────────────────────────
+function drawSky(rainAmt) {
+  var W=cvs.width, H=cvs.height, gY=H*0.60;
+  // Interpolate sky colours as integers
+  var t1r=lerpInt(60,70,rainAmt),  t1g=lerpInt(138,100,rainAmt), t1b=lerpInt(200,122,rainAmt);
+  var t2r=lerpInt(110,92,rainAmt), t2g=lerpInt(178,138,rainAmt), t2b=lerpInt(225,168,rainAmt);
+  var t3r=lerpInt(148,118,rainAmt),t3g=lerpInt(205,162,rainAmt), t3b=lerpInt(235,182,rainAmt);
+  try {
+    var sg=ctx.createLinearGradient(0,0,0,gY);
+    sg.addColorStop(0,   rgb(t1r,t1g,t1b));
+    sg.addColorStop(0.55,rgb(t2r,t2g,t2b));
+    sg.addColorStop(1,   rgb(t3r,t3g,t3b));
+    ctx.fillStyle=sg;
+  } catch(e){ ctx.fillStyle='#3a8cc8'; }
+  ctx.fillRect(0,0,W,gY);
+}
+
+// ── Sun ───────────────────────────────────────────────
+function drawSun(intensity) {
+  var W=cvs.width, H=cvs.height;
+  var sx=W*0.87, sy=H*0.09, r=H*0.062;
+  var pulse=1+Math.sin(T*1.15)*0.04;
+  var glowA = clamp(intensity*0.38, 0, 1).toFixed(3);
+  var glowA2= clamp(intensity*0.16, 0, 1).toFixed(3);
+  ctx.save();
+  try {
+    var gw=ctx.createRadialGradient(sx,sy,r*0.5,sx,sy,r*4*pulse);
+    gw.addColorStop(0,   'rgba(255,228,78,'  +glowA +')');
+    gw.addColorStop(0.5, 'rgba(255,178,38,'  +glowA2+')');
+    gw.addColorStop(1,   'rgba(255,155,0,0)');
+    ctx.beginPath(); ctx.arc(sx,sy,r*4*pulse,0,Math.PI*2);
+    ctx.fillStyle=gw; ctx.fill();
+  } catch(e){}
+  try {
+    var dc=ctx.createRadialGradient(sx-r*0.3,sy-r*0.3,0,sx,sy,r*pulse);
+    dc.addColorStop(0,'#fffde0'); dc.addColorStop(0.4,'#ffe84a'); dc.addColorStop(1,'#ffa800');
+    ctx.beginPath(); ctx.arc(sx,sy,r*pulse,0,Math.PI*2);
+    ctx.fillStyle=dc; ctx.fill();
+  } catch(e){
+    ctx.beginPath(); ctx.arc(sx,sy,r*pulse,0,Math.PI*2);
+    ctx.fillStyle='#ffe84a'; ctx.fill();
+  }
+  // Rays
+  ctx.globalAlpha = clamp(intensity*0.48, 0, 1);
+  ctx.strokeStyle='rgba(255,230,80,0.65)'; ctx.lineWidth=2.5;
+  for(var ri=0;ri<12;ri++){
+    var ang=(ri/12)*Math.PI*2+T*0.14;
+    var r1=r*1.38*pulse, r2=r*(1.95+Math.sin(T*2+ri)*0.18)*pulse;
+    ctx.beginPath();
+    ctx.moveTo(sx+Math.cos(ang)*r1, sy+Math.sin(ang)*r1);
+    ctx.lineTo(sx+Math.cos(ang)*r2, sy+Math.sin(ang)*r2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── Mountains ─────────────────────────────────────────
+function drawMountains() {
+  var W=cvs.width, H=cvs.height, gY=H*0.60;
+
+  // Far mountains (hazy, parallax)
+  ctx.save(); ctx.globalAlpha=0.4;
+  [[0.30,0.54,105],[0.49,0.46,138],[0.63,0.55,98]].forEach(function(m){
+    var mx=W*m[0], my=H*m[1], mw=m[2];
+    ctx.beginPath();
+    ctx.moveTo(mx-mw,gY); ctx.lineTo(mx,my); ctx.lineTo(mx+mw,gY);
+    ctx.closePath();
+    try {
+      var g=ctx.createLinearGradient(mx,my,mx,gY);
+      g.addColorStop(0,'#8aaecf'); g.addColorStop(1,'#5e8aaa');
+      ctx.fillStyle=g;
+    } catch(e){ ctx.fillStyle='#7a9eba'; }
+    ctx.fill();
+  });
+  ctx.restore();
+
+  // Near mountains (sharp, with snow)
+  var mDefs=[
+    {cx:0.38,py:0.23,w:162,c1:'#2a4a1e',c2:'#4a7040',snow:68},
+    {cx:0.50,py:0.13,w:195,c1:'#243e18',c2:'#527848',snow:88}, // main peak
+    {cx:0.62,py:0.27,w:145,c1:'#2a4a1e',c2:'#4a7040',snow:54},
+  ];
+  mDefs.forEach(function(m){
+    var mx=W*m.cx, my=H*m.py, mw=m.w;
+    ctx.save();
+    // body
+    ctx.beginPath();
+    ctx.moveTo(mx-mw,gY); ctx.lineTo(mx,my); ctx.lineTo(mx+mw,gY);
+    ctx.closePath();
+    try {
+      var mg=ctx.createLinearGradient(mx-mw,0,mx+mw,0);
+      mg.addColorStop(0,m.c1); mg.addColorStop(0.45,m.c2); mg.addColorStop(1,m.c1);
+      ctx.fillStyle=mg;
+    } catch(e){ ctx.fillStyle=m.c2; }
+    ctx.fill();
+    // snow cap
+    ctx.beginPath();
+    ctx.moveTo(mx-m.snow*0.82,my+m.snow);
+    ctx.lineTo(mx,my); ctx.lineTo(mx+m.snow*0.82,my+m.snow);
+    ctx.closePath();
+    try {
+      var sg=ctx.createLinearGradient(mx,my,mx,my+m.snow);
+      sg.addColorStop(0,'#ffffff'); sg.addColorStop(1,'rgba(230,240,255,0)');
+      ctx.fillStyle=sg;
+    } catch(e){ ctx.fillStyle='rgba(255,255,255,0.8)'; }
+    ctx.fill();
+    // fog near snowline
+    ctx.globalAlpha=0.10+Math.sin(T*0.38+m.cx*3)*0.05;
+    ctx.beginPath();
+    ctx.ellipse(mx,my+m.snow*1.5,mw*0.5,24,0,0,Math.PI*2);
+    ctx.fillStyle='rgba(215,230,248,0.9)'; ctx.fill();
+    ctx.restore();
+  });
+}
+
+// ── Water surface (sine wave sum) ─────────────────────
+function drawWater(x,y,w,h,c1,c2,c3,amp,freq,phase) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x, y+h);
+  ctx.lineTo(x, y);
+  for(var px=x; px<=x+w; px+=4){
+    var fx=(px-x)/w;
+    var wave=Math.sin(fx*freq*Math.PI*2+T*2.4+phase)*amp
+            +Math.sin(fx*freq*1.65*Math.PI*2+T*1.75+phase+1)*amp*0.38;
+    ctx.lineTo(px, y+wave);
+  }
+  ctx.lineTo(x+w,y+h); ctx.closePath();
+  try {
+    var wg=ctx.createLinearGradient(x,y,x,y+h);
+    wg.addColorStop(0,c1); wg.addColorStop(0.22,c2); wg.addColorStop(1,c3);
+    ctx.fillStyle=wg;
+  } catch(e){ ctx.fillStyle=c2; }
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSunReflection(x,y,w) {
+  ctx.save();
+  ctx.globalAlpha=0.22+Math.sin(T*2.8)*0.07;
+  ctx.globalCompositeOperation='lighter';
+  var cx=x+w*0.72;
+  for(var i=0;i<5;i++){
+    var rx=cx+Math.sin(T*0.75+i*1.05)*28, ry=y+8+i*4.5;
+    ctx.beginPath();
+    ctx.ellipse(rx,ry,rnd(10,28),2.2,0.1,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,238,170,0.6)'; ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── Ground & underground ──────────────────────────────
+function drawGround() {
+  var W=cvs.width, H=cvs.height;
+  var gY=H*0.60, uY=H*0.82;
+  try {
+    var gg=ctx.createLinearGradient(0,gY,0,H);
+    gg.addColorStop(0,'#6dbe3a'); gg.addColorStop(0.07,'#52a028');
+    gg.addColorStop(0.18,'#3d8018'); gg.addColorStop(0.42,'#2e6010');
+    ctx.fillStyle=gg;
+  } catch(e){ ctx.fillStyle='#3d8018'; }
+  ctx.fillRect(0,gY,W,H-gY);
+  try {
+    var ug=ctx.createLinearGradient(0,uY,0,H);
+    ug.addColorStop(0,'#9b7348'); ug.addColorStop(0.42,'#7a5230'); ug.addColorStop(1,'#5c3c1c');
+    ctx.fillStyle=ug;
+  } catch(e){ ctx.fillStyle='#7a5230'; }
+  ctx.fillRect(0,uY,W,H-uY);
+  // water table band
+  var wtY=uY+(H-uY)*0.28, wtH=(H-uY)*0.32;
+  var wa=(0.38+Math.sin(T*0.7)*0.08).toFixed(3);
+  var wb=(0.58+Math.sin(T*0.7)*0.08).toFixed(3);
+  try {
+    var wt=ctx.createLinearGradient(0,wtY,W,wtY);
+    wt.addColorStop(0,  'rgba(55,135,255,'+wa+')');
+    wt.addColorStop(0.5,'rgba(75,165,255,'+wb+')');
+    wt.addColorStop(1,  'rgba(55,135,255,'+wa+')');
+    ctx.fillStyle=wt;
+  } catch(e){ ctx.fillStyle='rgba(75,155,255,0.45)'; }
+  ctx.fillRect(0,wtY,W,wtH);
+}
+
+// ── River ─────────────────────────────────────────────
+function drawRiver() {
+  var W=cvs.width, H=cvs.height, gY=H*0.60;
+  var r0x=W*0.535, r0y=gY, r2x=W*0.79, r2y=gY-5;
+  ctx.save();
+  var rw=H*0.013;
+  ctx.lineWidth=rw; ctx.lineCap='round';
+  try {
+    var rg=ctx.createLinearGradient(r0x,0,r2x,0);
+    rg.addColorStop(0,'#3a9aee'); rg.addColorStop(1,'#2070c8');
+    ctx.strokeStyle=rg;
+  } catch(e){ ctx.strokeStyle='#3a9aee'; }
+  ctx.beginPath();
+  ctx.moveTo(r0x,r0y);
+  ctx.quadraticCurveTo(W*0.66,gY+9,r2x,r2y);
+  ctx.stroke();
+  // flow shimmer dots
+  ctx.lineWidth=rw*0.38;
+  for(var ri=0;ri<4;ri++){
+    var prog=((T*0.5+ri*0.25)%1);
+    var rx=lerp(r0x,r2x,prog), ry=lerp(r0y,r2y,prog)+Math.sin(prog*Math.PI)*7;
+    ctx.beginPath(); ctx.arc(rx,ry,rw*0.52,0,Math.PI*2);
+    ctx.fillStyle=rgba(175,225,255, 0.55-prog*0.28); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── Labels ────────────────────────────────────────────
+function drawLabel(text, x, y) {
+  ctx.save();
+  ctx.font='bold '+Math.round(cvs.height*0.017)+'px Nunito,sans-serif';
+  ctx.textAlign='center';
+  var tw=ctx.measureText(text).width;
+  ctx.fillStyle='rgba(0,0,0,0.28)';
+  ctx.beginPath();
+  ctx.roundRect(x-tw/2-8, y-cvs.height*0.017, tw+16, cvs.height*0.024, 8);
+  ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// ── UI ────────────────────────────────────────────────
+var snameEl=document.getElementById('sname');
+var snumEl =document.getElementById('snum');
+var capS   =document.getElementById('cap-s');
+var capT   =document.getElementById('cap-t');
+var tfill  =document.getElementById('tfill');
+
+function setStageUI(s) {
+  snameEl.textContent=s.name; snumEl.textContent=s.id+1;
+  capS.textContent=s.label+' '; capT.textContent=s.text;
+  for(var i=0;i<9;i++) document.getElementById('d'+i).className='dot'+(i===s.id?' on':'');
+}
+
+function nextStage() {
+  stageIdx=(stageIdx+1)%STAGES.length;
+  stageT=0;
+  setStageUI(STAGES[stageIdx]);
+}
+
+setStageUI(STAGES[0]);
+
+// ── MAIN LOOP ─────────────────────────────────────────
+function frame(now) {
+  if(!lastMs) lastMs=now;
+  var dt=Math.min((now-lastMs)/1000, 0.05);
+  lastMs=now;
+  T+=dt; stageT+=dt;
+
+  var S=STAGES[stageIdx];
+  var pct=Math.min(stageT/S.dur,1);
+  if(stageT>=S.dur) nextStage();
+  tfill.style.width=(pct*100)+'%';
+
+  var W=cvs.width, H=cvs.height;
+  var gY=H*0.60;
+
+  // Smooth cloud state
+  var targetGray = S.rain>0 ? clamp(S.rain*0.9, 0.25, 0.88) : (S.cloudGrow ? 0.08 : 0);
+  cloudGray  += (targetGray - cloudGray)  * dt * 0.45;
+  cloudScale += ((1.0 + S.cloudGrow*0.2) - cloudScale) * dt * 0.38;
+  var rainAmt = clamp(cloudGray, 0, 1);
+
+  // Spawn particles
+  if(S.evap>0   && Math.random()<S.evap*3.8*dt)   { spawnEvap(W*0.73+rnd(-W*0.07,W*0.07), H*0.594); spawnEvap(W*0.73+rnd(-W*0.05,W*0.05), H*0.598); }
+  if(S.evap>0   && Math.random()<S.evap*1.4*dt)    spawnEvap(W*0.09+rnd(-W*0.035,W*0.035), H*0.60);
+  if(S.transp>0 && Math.random()<S.transp*7*dt)    { var tr=trees[Math.floor(rnd(0,trees.length))]; spawnTransp(tr.xf*W, gY-52*tr.sz); }
+  if(S.rain>0   && Math.random()<S.rain*18*dt)      spawnRain(Math.ceil(S.rain*4));
+  if(S.runoff>0 && Math.random()<S.runoff*2.8*dt)   spawnRunoff(W*0.53+rnd(-W*0.01,W*0.02), gY+rnd(-4,4));
+  if(S.infil>0  && Math.random()<S.infil*3.5*dt)    spawnInfil(rnd(W*0.24,W*0.61), gY+rnd(2,18));
+  if(S.wt>0     && Math.random()<S.wt*2.8*dt)       spawnWT(rnd(W*0.04,W*0.54), H*0.83+rnd(4,14));
+
+  // Updates
+  updateClouds(dt);
+  updateBirds(dt);
+  updateParticles(dt);
+  if(S.rain>0 || rain.length>0) updateRain(dt);
+
+  // ── DRAW ──
+  ctx.clearRect(0,0,W,H);
+
+  var wind=0.75+Math.sin(T*0.65)*0.38+(S.rain>0?0.55:0);
+
+  // 1. Sky
+  drawSky(rainAmt);
+
+  // 2. Far clouds (layer 0) — slowest, most transparent
+  ctx.save(); ctx.globalAlpha=0.62;
+  clouds.filter(function(c){return c.layer===0;}).forEach(drawCloud);
+  ctx.restore();
+
+  // 3. Sun
+  drawSun(S.sunI*(1-rainAmt*0.72));
+
+  // 4. Light shafts
+  if(S.sunI>0.55 && rainAmt<0.28){
+    ctx.save();
+    ctx.globalAlpha=(S.sunI-0.5)*0.09*(1-rainAmt*3.2);
+    ctx.globalCompositeOperation='lighter';
+    var sx2=W*0.87, sy2=H*0.09;
+    ctx.lineWidth=38;
+    for(var si=0;si<5;si++){
+      var a=( 0.58+si*0.09)*Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(sx2,sy2);
+      ctx.lineTo(sx2+Math.cos(a)*W*1.6, sy2+Math.sin(a)*H*1.6);
+      ctx.strokeStyle='rgba(255,240,155,0.7)'; ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 5. Birds
+  drawBirds(1-rainAmt*0.55);
+
+  // 6. Mid clouds
+  ctx.save(); ctx.globalAlpha=0.82;
+  clouds.filter(function(c){return c.layer===1;}).forEach(drawCloud);
+  ctx.restore();
+
+  // 7. Mountains
+  drawMountains();
+
+  // 8. Near clouds (fastest)
+  clouds.filter(function(c){return c.layer===2;}).forEach(drawCloud);
+
+  // 9. Ground + underground
+  drawGround();
+
+  // 10. Lake
+  drawWater(W*0.04, gY-H*0.048, W*0.115, H*0.058,
+    '#5ab8f8','#2880d0','#0a50a8', 3.2, 3, 0.5);
+  drawSunReflection(W*0.04, gY-H*0.048, W*0.115);
+
+  // 11. River
+  drawRiver();
+
+  // 12. Sea
+  drawWater(W*0.68, gY-H*0.012, W*0.32+2, H-gY+H*0.012+2,
+    '#3a9eee','#1a6ab8','#083888', 5, 3.5, 0);
+  drawSunReflection(W*0.68, gY-H*0.012, W*0.32);
+
+  // 13. Grass
+  drawGrass(gY, wind);
+
+  // 14. Trees
+  trees.forEach(function(tr){ drawTree(tr.xf*W, gY, tr.sz*(H/700), wind, tr.xf*9.8); });
+
+  // 15. Particles
+  drawParticles();
+
+  // 16. Rain
+  if(S.rain>0 || rain.length>0) drawRain();
+
+  // 17. Labels
+  drawLabel('Laut',  W*0.84, gY+H*0.04);
+  drawLabel('Danau', W*0.095,gY-H*0.07);
+  drawLabel('Sungai',W*0.63, gY+H*0.018);
+  if(S.wt>0||S.infil>0) drawLabel('Air Tanah →', W*0.48, H*0.875);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
